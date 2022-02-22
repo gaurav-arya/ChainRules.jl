@@ -9,13 +9,18 @@ function rrule(config::RuleConfig{>:HasReverseMode}, ::typeof(pmap), f, p::Abstr
 
     darr = dfill([], (nworkers(p) + 1,), vcat(myid(), workers(p))) # Include own proc to handle empty worker pool
 
+    println("here! with ", nworkers(p), " processors")
+    println("eltype of X ", eltype(X))
+
     function forw(x)
         y, back = rrule_via_ad(config, f, x)
         push!(darr[:L][1], back)
         return y, myid(), length(darr[:L][1])
     end
 
-    ys_IDs_indices = pmap(forw, p, X; kwargs...)
+    print("forward map: ")
+    @time ys_IDs_indices = pmap(forw, p, X; kwargs...)
+
     ys = getindex.(ys_IDs_indices, 1) # the primal values
     IDs = getindex.(ys_IDs_indices, 2) # remember which processors handled which elements of X
     indices = getindex.(ys_IDs_indices, 3) # remember the index of the pullback in the array on each processor
@@ -42,15 +47,20 @@ function rrule(config::RuleConfig{>:HasReverseMode}, ::typeof(pmap), f, p::Abstr
         end
 
         # combine the results from each proc into res = pmap((back, ȳ) -> back(ȳ), p, backs for each position, Ȳ)
-        res_batches = asyncmap(run_backs, unique_IDs, positions)
+        print("backward map: ")
+        @time res_batches = asyncmap(run_backs, unique_IDs, positions)
         res = similar(res_batches[1], size(Ȳ))
 
         for (positions, res_batch) in zip(positions, res_batches)
             res[positions] = res_batch
         end
 
+        println("Type of first(res[1]): ", typeof(first(res[1])))
+
         # extract f̄ and X̄ 
+        println("going to extract fbar")
         f̄ = sum(first, res)
+        println("worked!")
         X̄ = project_X(map(last, res))
         return (NoTangent(), f̄, NoTangent(), X̄)
     end
